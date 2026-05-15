@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(pnpm add *)",
-      "Bash(Select-String gsap *)"
+      "Bash(Select-String gsap *)",
+      "Bash(d:/oryx/node_modules/.bin/tsc --noEmit -p d:/oryx/tsconfig.json)"
     ]
   }
 }

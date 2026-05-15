@@ -13,12 +13,32 @@ import { SplitText as GSAPSplitText } from 'gsap/SplitText'
 import Ory from './models/Ory'
 import { useLoader } from '@/contexts/LoaderContext'
 import SplitText from './SplitText/SplitText'
+import LiquidGlass, { type LiquidGlassConfig } from './LiquidGlass'
+import IceFrameBackground from './IceFrameBackground'
+
 
 gsap.registerPlugin(ScrollTrigger, GSAPSplitText)
 RectAreaLightUniformsLib.init()
 
 const pixelFont = Press_Start_2P({ weight: '400', subsets: ['latin'], display: 'swap' })
 const condensedFont = Bebas_Neue({ weight: '400', subsets: ['latin'], display: 'swap' })
+
+// ── Blob liquid lens — tweak everything here ──
+const BLOB_CONFIG: LiquidGlassConfig = {
+  radius:       1700,    // lens size (px)
+  speed:        4500,    // unused here — GSAP drives progress; see BLOB_SPEED
+  blur:         0.01,       // backdrop blur (px)
+  saturate:     150,     // backdrop saturation (%)
+  displacement: 34,      // wobble amplitude (px) — warp strength at the rim
+  frequency:    0.001,   // noise coarseness — lower = broader wobble
+  octaves:      1,       // noise detail — 1 = silky, higher = more grain
+  smoothness:   0.5,     // gaussian blur on displacement field
+  edge:         0,     // 0..1 — rim highlight + inner shadow strength
+  smoothing:    0.12,    // 0..1 — cursor follow lerp (unused with progressRef)
+  trail:        0.67,    // 0..1.5 — velocity-driven stretch along motion
+}
+const BLOB_SPEED = 6              // seconds for one diagonal sweep (lower = faster)
+const BLOB_EASE  = 'expo.out'     // sprint at the start, ease out at the end
 
 type MousePos = { x: number; y: number }
 
@@ -49,14 +69,19 @@ function MouseFollowModel({ mouseRef }: { mouseRef: React.RefObject<MousePos> })
     const finalX = THREE.MathUtils.lerp(tiltX, 0, s3pE)
     const finalScale = THREE.MathUtils.lerp(zoom2, 1.45, zoomS3 * zoomS3)
 
+    // ── Screen 4 (0 → 1 over the 4th 100vh)  zoom back out ──────────────────
+    const s4p = THREE.MathUtils.clamp((window.scrollY / window.innerHeight - 3), 0, 1)
+    const s4pE = s4p * s4p * (3 - 2 * s4p)                     // smoothstep
+    const s4Scale = THREE.MathUtils.lerp(finalScale, 1.0, s4pE)
+
     groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, finalY, 0.08)
     groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, finalX, 0.08)
-    groupRef.current.scale.setScalar(THREE.MathUtils.lerp(groupRef.current.scale.x, finalScale, 0.06))
+    groupRef.current.scale.setScalar(THREE.MathUtils.lerp(groupRef.current.scale.x, s4Scale, 0.06))
   })
 
   return (
     <group ref={groupRef}>
-      <Ory scale={1.0} position={[0, 0, 0]} />
+      <Ory scale={1.0} position={[0, 0, 0]}/>
     </group>
   )
 }
@@ -89,6 +114,7 @@ export default function OrySection() {
   const mouseRef = useRef<MousePos>({ x: 0, y: 0 })
   const containerRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef<HTMLDivElement>(null)
+  const liquidProgressRef = useRef<number>(0)
   const { done } = useLoader()
 
   useEffect(() => {
@@ -108,13 +134,35 @@ export default function OrySection() {
   // Entrance reveal when loader clears
   useGSAP(() => {
     if (!done) return
-    gsap.to('[data-ani]', {
+
+    // If user already scrolled past the entrance area, snap straight to the
+    // final state so the scrub timeline can take over without fighting us.
+    if (window.scrollY > 5) {
+      gsap.set('[data-ani]', { opacity: 1, y: 0 })
+      return
+    }
+
+    const entrance = gsap.to('[data-ani]', {
       opacity: 1,
       y: 0,
       duration: 1,
       ease: 'power3.out',
       stagger: (i) => i * 0.15,
     })
+
+    // If the user starts scrolling mid-entrance, fast-forward so the
+    // scroll-driven fade-out isn't held hostage by this tween.
+    const onScroll = () => {
+      if (window.scrollY > 5) {
+        entrance.progress(1)
+        window.removeEventListener('scroll', onScroll)
+      }
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+    }
   }, { scope: pinnedRef, dependencies: [done] })
 
   // Pinned scroll transition
@@ -127,21 +175,48 @@ export default function OrySection() {
     const rightEl  = pinned.querySelector<HTMLElement>('[data-l2-right]')
     const leftEl3  = pinned.querySelector<HTMLElement>('[data-l3-left]')
     const rightEl3 = pinned.querySelector<HTMLElement>('[data-l3-right]')
+    const waterproofEl  = pinned.querySelector<HTMLElement>('[data-l4-waterproof]')
+    const liquidEl      = pinned.querySelector<HTMLElement>('[data-l4-liquid]')
+    const iceFrameEl    = pinned.querySelector<HTMLElement>('[data-l4-iceframe]')
+    const l4LeftEl      = pinned.querySelector<HTMLElement>('[data-l4-left]')
+    const l4RightEl     = pinned.querySelector<HTMLElement>('[data-l4-right]')
+    const l4LeftLine    = pinned.querySelector<SVGLineElement>('[data-l4-line-left]')
+    const l4RightLine   = pinned.querySelector<SVGLineElement>('[data-l4-line-right]')
+    const l4LeftDot     = pinned.querySelector<SVGCircleElement>('[data-l4-dot-left]')
+    const l4RightDot    = pinned.querySelector<SVGCircleElement>('[data-l4-dot-right]')
+
     const navHeader = document.querySelector('header')
 
-    const leftSplit  = leftEl  ? new GSAPSplitText(leftEl,  { type: 'words' }) : null
-    const rightSplit = rightEl ? new GSAPSplitText(rightEl, { type: 'words' }) : null
+    const leftSplit   = leftEl   ? new GSAPSplitText(leftEl,   { type: 'words' }) : null
+    const rightSplit  = rightEl  ? new GSAPSplitText(rightEl,  { type: 'words' }) : null
     const leftSplit3  = leftEl3  ? new GSAPSplitText(leftEl3,  { type: 'words' }) : null
     const rightSplit3 = rightEl3 ? new GSAPSplitText(rightEl3, { type: 'words' }) : null
+    const l4LeftSplit  = l4LeftEl  ? new GSAPSplitText(l4LeftEl,  { type: 'words' }) : null
+    const l4RightSplit = l4RightEl ? new GSAPSplitText(l4RightEl, { type: 'words' }) : null
 
-    if (leftSplit)  gsap.set(leftSplit.words,  { opacity: 0 })
-    if (leftEl)     gsap.set(leftEl, { y: -14 })
-    if (rightSplit) gsap.set(rightSplit.words, { opacity: 0 })
-    if (rightEl)    gsap.set(rightEl, { y: 14 })
+    // Parents start at opacity 0 (inline CSS, prevents refresh flash). Once
+    // SplitText has hidden each word individually, we promote the parent back
+    // to opacity 1 so the per-word reveal can actually be seen.
+    if (leftSplit)   gsap.set(leftSplit.words,   { opacity: 0 })
+    if (leftEl)      gsap.set(leftEl,  { y: -14, opacity: 1 })
+    if (rightSplit)  gsap.set(rightSplit.words,  { opacity: 0 })
+    if (rightEl)     gsap.set(rightEl, { y: 14, opacity: 1 })
     if (leftSplit3)  gsap.set(leftSplit3.words,  { opacity: 0 })
-    if (leftEl3)     gsap.set(leftEl3, { y: -14 })
+    if (leftEl3)     gsap.set(leftEl3, { y: -14, opacity: 1 })
     if (rightSplit3) gsap.set(rightSplit3.words, { opacity: 0 })
-    if (rightEl3)    gsap.set(rightEl3, { y: 14 })
+    if (rightEl3)    gsap.set(rightEl3, { y: 14, opacity: 1 })
+    if (waterproofEl) gsap.set(waterproofEl, { opacity: 0, filter: 'blur(50px)', x: -60 })
+    if (liquidEl)     gsap.set(liquidEl,     { opacity: 0 })
+    if (iceFrameEl)   gsap.set(iceFrameEl,   { opacity: 0 })
+    if (l4LeftEl)    gsap.set(l4LeftEl,   { x: -30, opacity: 0 })
+    if (l4LeftSplit) gsap.set(l4LeftSplit.words,  { opacity: 0 })
+    if (l4RightEl)   gsap.set(l4RightEl,  { x: 30,  opacity: 0 })
+    if (l4RightSplit) gsap.set(l4RightSplit.words, { opacity: 0 })
+    if (l4LeftLine)  gsap.set(l4LeftLine,  { strokeDasharray: 800, strokeDashoffset: 800 })
+    if (l4RightLine) gsap.set(l4RightLine, { strokeDasharray: 800, strokeDashoffset: 800 })
+    if (l4LeftDot)   gsap.set(l4LeftDot,  { opacity: 0 })
+    if (l4RightDot)  gsap.set(l4RightDot, { opacity: 0 })
+
 
     const tl = gsap.timeline({
       scrollTrigger: {
@@ -149,15 +224,17 @@ export default function OrySection() {
         start: 'top top',
         end: 'bottom bottom',
         pin: pinned,
-        scrub: 1.1,
+        scrub: 0.5,
         anticipatePin: 1,
       },
     })
 
-    // 0–40 %: fade layer-1 out (fromTo so reversal always restores correctly)
+    // 0–40 %: fade layer-1 out. immediateRender:false so the from-vars don't
+    // snap layer1 to opacity:1 the moment the timeline is built (which was
+    // clobbering the entrance reveal).
     tl.fromTo(layer1,
       { opacity: 1, y: 0 },
-      { opacity: 0, y: -28, duration: 0.4, ease: 'power2.inOut', stagger: 0.03 },
+      { opacity: 0, y: -28, duration: 0.4, ease: 'power2.inOut', stagger: 0.03, immediateRender: false },
       0
     )
 
@@ -205,28 +282,98 @@ export default function OrySection() {
       tl.to(rightEl, { y: 30, duration: 0.25, ease: 'power2.in' }, 1.05)
     }
 
-    // Layer 3 fade in
+    // Layer 3 fade in — synced with 3D Screen 3 (p: 0.67→1.0 = scrollY 201vh, GSAP ≈ 3.45)
     if (leftSplit3?.words.length) {
-      tl.fromTo(leftEl3, { y: -85 }, { y: 0, duration: 0.5, ease: 'power2.out' }, 1.4)
-      tl.fromTo(leftSplit3.words, { opacity: 0 }, { opacity: 1, duration: 0.35, ease: 'power1.inOut', stagger: { each: 0.05, from: 'end' } }, 1.4)
+      tl.fromTo(leftEl3, { y: -85 }, { y: 0, duration: 0.5, ease: 'power2.out' }, 3.45)
+      tl.fromTo(leftSplit3.words, { opacity: 0 }, { opacity: 1, duration: 0.35, ease: 'power1.inOut', stagger: { each: 0.05, from: 'end' } }, 3.45)
     }
     if (rightSplit3?.words.length) {
-      tl.fromTo(rightEl3, { y: 85 }, { y: 0, duration: 0.5, ease: 'power2.out' }, 1.4)
-      tl.fromTo(rightSplit3.words, { opacity: 0 }, { opacity: 1, duration: 0.35, ease: 'power1.inOut', stagger: { each: 0.05, from: 'start' } }, 1.4)
+      tl.fromTo(rightEl3, { y: 85 }, { y: 0, duration: 0.5, ease: 'power2.out' }, 3.45)
+      tl.fromTo(rightSplit3.words, { opacity: 0 }, { opacity: 1, duration: 0.35, ease: 'power1.inOut', stagger: { each: 0.05, from: 'start' } }, 3.45)
+    }
+
+    // Layer 3 fade out — before waterproof at 5.45 (3D Screen 3 ends at GSAP ≈ 5.14)
+    if (leftSplit3?.words.length) {
+      tl.to(leftSplit3.words, { opacity: 0, duration: 0.25, ease: 'power2.in' }, 4.9)
+      tl.to(leftEl3, { y: -30, duration: 0.3, ease: 'power2.in' }, 4.9)
+    }
+    if (rightSplit3?.words.length) {
+      tl.to(rightSplit3.words, { opacity: 0, duration: 0.25, ease: 'power2.in' }, 4.9)
+      tl.to(rightEl3, { y: 30, duration: 0.3, ease: 'power2.in' }, 4.9)
+    }
+
+    // Layer 4: WATER PROOF — clip sweeps left-to-right, blur clears as it goes
+    if (waterproofEl) {
+      tl.fromTo(
+        waterproofEl,
+        { opacity: 0, filter: 'blur(50px)', x: -60 },
+        { opacity: 1, filter: 'blur(0px)',  x: 0,   duration: 1.4, ease: 'power1.inOut' },
+        5.45
+      )
+    }
+
+    // Liquid blob: one-shot timer animation triggered when scroll passes 7.0
+    // (right as the WATER PROOF text + lines reveal completes). Independent
+    // of scroll speed — the blob plays from top-right → bottom-left once.
+    const blobTl = gsap.timeline({ paused: true })
+    if (liquidEl) {
+      blobTl.fromTo(liquidEl, { opacity: 0 }, { opacity: 1, duration: 0.4, ease: 'power2.out' }, 0)
+    }
+    blobTl.fromTo(liquidProgressRef, { current: 0 }, { current: 1, duration: BLOB_SPEED, ease: BLOB_EASE }, 0)
+
+    tl.call(function () {
+      const dir = tl.scrollTrigger?.direction ?? 1
+      if (dir > 0) {
+        blobTl.restart()
+      } else {
+        blobTl.pause(0)
+        liquidProgressRef.current = 0
+        if (liquidEl) gsap.set(liquidEl, { opacity: 0 })
+      }
+    }, [], 7.0)
+
+    // Ice frame: fade in alongside the blob in screen 4 (scrub-driven, reverses on scroll up)
+    if (iceFrameEl) {
+      tl.fromTo(
+        iceFrameEl,
+        { opacity: 0 },
+        { opacity: 1, duration: 0.6, ease: 'power2.out' },
+        7.0
+      )
+    }
+
+    // Layer 4 pointer lines + text — appear after WATER PROOF finishes (5.45 + 1.4 = 6.85)
+    if (l4LeftDot)  tl.to(l4LeftDot,  { opacity: 0.9, duration: 0.05 }, 6.85)
+    if (l4RightDot) tl.to(l4RightDot, { opacity: 0.9, duration: 0.05 }, 6.95)
+    if (l4LeftLine)  tl.to(l4LeftLine,  { strokeDashoffset: 0, duration: 0.4, ease: 'power2.inOut' }, 6.85)
+    if (l4RightLine) tl.to(l4RightLine, { strokeDashoffset: 0, duration: 0.4, ease: 'power2.inOut' }, 6.95)
+    if (l4LeftEl)    tl.to(l4LeftEl,  { x: 0, opacity: 1, duration: 0.35, ease: 'power2.out' }, 6.9)
+    if (l4LeftSplit?.words.length) {
+      tl.to(l4LeftSplit.words, { opacity: 1, duration: 0.3, ease: 'power1.inOut', stagger: { each: 0.04, from: 'start' } }, 6.94)
+    }
+    if (l4RightEl)   tl.to(l4RightEl, { x: 0, opacity: 1, duration: 0.35, ease: 'power2.out' }, 7.0)
+    if (l4RightSplit?.words.length) {
+      tl.to(l4RightSplit.words, { opacity: 1, duration: 0.3, ease: 'power1.inOut', stagger: { each: 0.04, from: 'start' } }, 7.04)
     }
 
     return () => {
       ScrollTrigger.getAll().forEach(st => st.kill())
+      blobTl.kill()
       leftSplit?.revert()
       rightSplit?.revert()
       leftSplit3?.revert()
       rightSplit3?.revert()
+      l4LeftSplit?.revert()
+      l4RightSplit?.revert()
     }
   }, { scope: containerRef, dependencies: [done] })
 
   return (
+
+    
+
     /* Outer container — gives scroll room for the pin */
-    <div ref={containerRef} style={{ minHeight: '400vh', background: '#111' }}>
+    <div ref={containerRef} style={{ minHeight: '600vh', background: '#111' }}>
 
       {/* 100 vh pinned panel */}
       <div
@@ -234,6 +381,15 @@ export default function OrySection() {
         className="w-full text-white"
         style={{ height: '100vh', position: 'relative', overflow: 'hidden', background: '#111' }}
       >
+
+        {/* ── Layer 4 ice frame background — fades in with the blob in screen 4 ── */}
+        <div
+          data-l4-iceframe
+          className="absolute inset-0"
+          style={{ zIndex: 0, opacity: 0, pointerEvents: 'none' }}
+        >
+          <IceFrameBackground height="100%" />
+        </div>
 
         {/* ── Canvas layer (always visible) ── */}
         <div
@@ -331,11 +487,6 @@ export default function OrySection() {
 
             {/* Bottom strip */}
             <div className="relative flex items-end justify-end px-8 pb-12 overflow-hidden" style={{ minHeight: '250px' }}>
-              <div
-                className="absolute inset-x-0 bottom-0 pointer-events-none"
-                style={{ height: '80px', background: 'linear-gradient(to top, #111 0%, transparent 100%)' }}
-              />
-
               <span
                 data-layer1
                 className="absolute left-1/2 -translate-x-1/2 bottom-[-70px] z-10"
@@ -386,6 +537,7 @@ export default function OrySection() {
                 fontSize: 'clamp(72px, 10vw, 172px)',
                 lineHeight: 0.92,
                 letterSpacing: '0.02em',
+                opacity: 0,
               }}
             >
               ISN&apos;T JUST<br />A WATCH.
@@ -397,7 +549,7 @@ export default function OrySection() {
             className="absolute"
             style={{
               left: 'clamp(200px, 70%, 2200px)',
-              maxWidth: 'clamp(160px, 18vw, 300px)',
+              maxWidth: 'clamp(160px, 18vw, 1300px)',
             }}
           >
             <h2
@@ -407,11 +559,125 @@ export default function OrySection() {
                 fontSize: 'clamp(22px, 2.8vw, 58px)',
                 lineHeight: 1.0,
                 letterSpacing: '0.03em',
+                opacity: 0,
               }}
             >
               OURDIGITALSIXTHSENSE.READSYOUR PULSE.TRACKSYOUR TERRAINKNOWSYOUR LIMITS.
             </h2>
           </div>
+        </div>
+
+        {/* ── Layer 4 liquid blob — only visible during the WATER PROOF section ── */}
+        <div
+          data-l4-liquid
+          className="absolute inset-0"
+          style={{ zIndex: 20, pointerEvents: 'none', opacity: 0 }}
+        >
+          <LiquidGlass
+            config={BLOB_CONFIG}
+            progressRef={liquidProgressRef}
+          />
+        </div>
+
+        {/* ── Layer 4: WATER PROOF — screen 4 top-center ── */}
+        <div
+          className="absolute inset-0 flex justify-center z-1"
+          style={{ zIndex: 0, pointerEvents: 'none', paddingTop: 'clamp(36px, 5vh, 72px)' }}
+        >
+          {/* wrapper carries the clip+blur so padding gives the blur room to bleed */}
+          <div
+            data-l4-waterproof
+            style={{ padding: '3rem 8rem', willChange: 'filter', opacity: 0 }}
+          >
+            <h2
+              className={`${condensedFont.className} uppercase text-white`}
+              style={{
+                fontSize: 'clamp(72px, 11vw, 260px)',
+                lineHeight: 1,
+                letterSpacing: '0.08em',
+                WebkitTextStroke: '5px white',
+              }}
+            >
+              WATER PROOF
+            </h2>
+          </div>
+        </div>
+
+        {/* ── Layer 4 pointer lines + text ── */}
+        <div className="absolute inset-0" style={{ zIndex: 5, pointerEvents: 'none' }}>
+
+          {/* Left text */}
+          <div
+            className="absolute"
+            style={{
+              left: 'clamp(24px, 7vw, 120px)',
+              top: '20%',
+              maxWidth: 'clamp(140px, 16vw, 1260px)',
+            }}
+          >
+            <p
+              data-l4-left
+              style={{
+                fontSize: 'clamp(12px, 1.15vw, 24px)',
+                lineHeight: 1.5,
+                fontFamily: 'system-ui, Arial, sans-serif',
+                fontWeight: 700,
+                color: '#fff',
+                margin: 0,
+                opacity: 0,
+              }}
+            >
+              Premium waterproof performance wrapped in a bold design made for every moment.
+            </p>
+          </div>
+
+          {/* Right text */}
+          <div
+            className="absolute"
+            style={{
+              right: 'clamp(24px, 4vw, 80px)',
+              bottom: '27%',
+              maxWidth: 'clamp(160px, 19vw, 1300px)',
+            }}
+          >
+            <p
+              data-l4-right
+              style={{
+                fontSize: 'clamp(14px, 1.6vw, 28px)',
+                lineHeight: 1.35,
+                fontFamily: 'system-ui, Arial, sans-serif',
+                fontWeight: 700,
+                color: '#fff',
+                margin: 0,
+                opacity: 0,
+              }}
+            >
+              Built to survive every splash, storm, and adventure — your time never stops.
+            </p>
+          </div>
+
+          {/* SVG pointer lines + dots */}
+          <svg className="absolute inset-0 w-full h-full" style={{ overflow: 'visible' }}>
+            {/* Left: dot at watch, line draws toward text */}
+            <circle data-l4-dot-left  cx="38%" cy="38%" r="3" fill="white" opacity="0" />
+            <line
+              data-l4-line-left
+              x1="38%" y1="38%"
+              x2="20%" y2="26%"
+              stroke="white" strokeWidth="1" strokeOpacity="0.65"
+              strokeDasharray="800" strokeDashoffset="800"
+            />
+
+            {/* Right: dot at watch, line draws toward text */}
+            <circle data-l4-dot-right cx="62%" cy="55%" r="3" fill="white" opacity="0" />
+            <line
+              data-l4-line-right
+              x1="62%" y1="55%"
+              x2="76%" y2="69%"
+              stroke="white" strokeWidth="1" strokeOpacity="0.65"
+              strokeDasharray="800" strokeDashoffset="800"
+            />
+          </svg>
         </div>
 
         {/* ── Layer 3: third-screen text ── */}
@@ -430,6 +696,7 @@ export default function OrySection() {
                 fontSize: 'clamp(72px, 10vw, 172px)',
                 lineHeight: 0.92,
                 letterSpacing: '0.02em',
+                opacity: 0,
               }}
             >
               BUILT FOR<br />THE WILD.
@@ -450,6 +717,7 @@ export default function OrySection() {
                 fontSize: 'clamp(22px, 2.8vw, 58px)',
                 lineHeight: 1.0,
                 letterSpacing: '0.03em',
+                opacity: 0,
               }}
             >
               PRECISION NAVIGATION. REAL-TIME TERRAIN ANALYSIS. WHERE MAPS END WE BEGIN.
