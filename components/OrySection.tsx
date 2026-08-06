@@ -15,6 +15,9 @@ import SplitText from './SplitText/SplitText'
 import LiquidGlass, { type LiquidGlassConfig } from './LiquidGlass'
 import IceFrameBackground from './IceFrameBackground'
 import OryxLogo from './OryxLogo'
+import { PerformanceRings, PerformanceContent } from './PerformanceScreen'
+import { HeartRateWave, HeartRateContent } from './HeartRateScreen'
+import { ActivityTerrain, ActivityContent } from './ActivityScreen'
 import { lamaSans } from '@/app/fonts'
 
 
@@ -44,6 +47,48 @@ const BLOB_CONFIG: LiquidGlassConfig = {
 const BLOB_SPEED = 6              // seconds for one diagonal sweep (lower = faster)
 const BLOB_EASE  = 'expo.out'     // sprint at the start, ease out at the end
 
+// ── Feature screens — slotted between the WATER PROOF outro and the
+// construction-strokes tail ──────────────────────────────────────────────────
+// The tail was authored against fixed timeline positions, so rather than
+// renumber every cue by hand each new screen books a block of timeline units
+// and everything downstream is offset by TAIL_SHIFT, which covers the lot.
+//
+// Per screen: _DUR is the total room it occupies, _IN_DUR / _OUT_DUR are how
+// much scroll the reveal and the exit play over. Those two are the retiming
+// dials — each phase is authored as a child timeline in relative beats and then
+// stretched to exactly that length, so raising one slows every element inside
+// it proportionally instead of just adding dead air. Whatever is left over is
+// hold, with the backdrop still in motion.
+const PERF_DUR     = 6.6          // ≈300vh
+const PERF_T       = 10.6         // intro starts — WATER PROOF is fully clear by 10.4
+const PERF_IN_DUR  = 3.0          // ≈136vh for the reveal
+const PERF_OUT_DUR = 2.5          // ≈114vh for the exit
+const PERF_OUT     = PERF_T + PERF_DUR - PERF_OUT_DUR   // 14.7
+
+const HR_DUR       = 6.6          // ≈300vh
+const HR_T         = PERF_T + PERF_DUR + 0.4            // 17.6 — a beat after perf clears
+const HR_IN_DUR    = 3.0
+const HR_OUT_DUR   = 2.5
+const HR_OUT       = HR_T + HR_DUR - HR_OUT_DUR         // 21.7
+
+const ACT_DUR      = 6.6          // ≈300vh
+const ACT_T        = HR_T + HR_DUR + 0.4                // 24.6
+const ACT_IN_DUR   = 3.0
+const ACT_OUT_DUR  = 2.5
+const ACT_OUT      = ACT_T + ACT_DUR - ACT_OUT_DUR      // 28.7
+
+// The tail used to open at 11.0 with the watch's pull-back; push it clear of
+// all three screens, leaving the same 0.4 breath after the last one ends (31.2).
+const TAIL_SHIFT   = (ACT_T + ACT_DUR + 0.4) - 11.0     // 20.6
+
+// Scroll length of one timeline unit. Every cue in this section was authored
+// against 500vh of scroll for the first 11 units, i.e. 45.43vh per unit; the
+// container height is derived from it so inserting units never re-times
+// anything that came before.
+const VH_PER_UNIT = 45.43
+const TL_END      = 30.2 + TAIL_SHIFT                   // full timeline duration
+const CONTAINER_VH = 100 + TL_END * VH_PER_UNIT         // pin height + scroll distance
+
 // Layer-5 strokes — rendered size of the OryxLogo construction drawing. Its
 // outer circle is 75% of this box (R_OUT 300 in an 800 viewBox), so this is
 // sized so that circle hugs the watch at its final zoomed-out scale (0.68).
@@ -62,8 +107,11 @@ const L5_SCALE_INNER = 1.25       // where the small circle stops, mid-tail
 const L5_SCALE_OUTER_LEAD = 1.15  // big circle's phase-1 size, just clear of the small one
 const L5_SCALE_OUTER = 1.5        // …then it keeps going, alone
 const L5_SCALE_DELAY = 0.2        // timeline units between a circle and its gray strokes (≈9vh)
-const L5_T_INNER = 17.0           // phase 1 starts — right as the watch finishes fading
-const L5_T_OUTER = 18.2           // phase 2 starts — after the inner set has settled
+// Everything from here on is pushed back by TAIL_SHIFT to clear the new screens.
+const L5_T_FADE  = 13.6 + TAIL_SHIFT // strokes fade up around the settled watch
+const L5_T_WATCH_OUT = 15.6 + TAIL_SHIFT // …and the watch fades out from under them
+const L5_T_INNER = 17.0 + TAIL_SHIFT // phase 1 starts — right as the watch finishes fading
+const L5_T_OUTER = 18.2 + TAIL_SHIFT // phase 2 starts — after the inner set has settled
 // Outer circle diameter as a fraction of the rendered logo box (R_OUT 300 of an
 // 800 viewBox → 600/800). Needed to work out how far the drawing has to shrink
 // or grow to sit exactly on the O of the wordmark.
@@ -76,7 +124,7 @@ const L5_OUTER_DIA_RATIO = 0.75
 // render once so the glyph's proportions can be measured off it.
 const ORYX_WORDMARK_SIZE = 'clamp(92px, 21vw, 470px)'
 const ORYX_MAX_WIDTH = 0.94       // …unless fitting the O would push ORYX past this much of the screen
-const L6_T    = 20.2              // move + fade start (≈918vh)
+const L6_T    = 20.2 + TAIL_SHIFT  // move + fade start (≈918vh + the new screens)
 const L6_DUR  = 2.0               // …and how long both take (≈91vh)
 const L6_HOLD = 0.8               // beat on the resolved logo before it breaks up
 
@@ -153,13 +201,14 @@ function MouseFollowModel({
     const s4pE = s4p * s4p * (3 - 2 * s4p)                     // smoothstep
     const s4Scale = THREE.MathUtils.lerp(finalScale, 1.0, s4pE)
 
-    // ── Outro (scrollY 500vh → 570vh)  extra pull-back. The layer-4 text is
-    //    gone by ≈435vh, so a full screen of scroll passes with the watch
-    //    just sitting there before it starts shrinking. Ends at 570 rather
-    //    than 600 so the 0.06 lerp below has room to actually converge on the
-    //    target scale — the watch is visibly settled into the ring before the
-    //    fade-out begins (≈641vh). ─────────────────────────────────────────
-    const s5p = THREE.MathUtils.clamp((window.scrollY / window.innerHeight - 5.0) / 0.7, 0, 1)
+    // ── Outro  extra pull-back, expressed in timeline units so it stays welded
+    //    to the scrubbed cues below instead of drifting when scroll room is
+    //    inserted upstream. Runs from just after the PERFORMANCE screen clears
+    //    (t 24.6) and ends 1.54 later rather than at the strokes' fade-in, so the
+    //    0.06 lerp below has room to actually converge on the target scale —
+    //    the watch is visibly settled inside the ring before it fades out.
+    const tUnits = window.scrollY / (window.innerHeight * VH_PER_UNIT / 100)
+    const s5p = THREE.MathUtils.clamp((tUnits - (11.0 + TAIL_SHIFT)) / 1.54, 0, 1)
     const s5pE = s5p * s5p * (3 - 2 * s5p)                     // smoothstep
     const s5Scale = THREE.MathUtils.lerp(s4Scale, 0.68, s5pE)
 
@@ -546,10 +595,11 @@ export default function OrySection() {
         { opacity: 1, duration: 2.0, ease: 'sine.inOut' },
         6.6
       )
-      // Outro: fade back out as the user finishes the section
+      // Outro: fade back out with the rest of layer 4. Clear by 10.4, so the
+      // cold blue frame is fully gone before the orange screen 5 lights up.
       tl.to(
         iceFrameEl,
-        { opacity: 0, duration: 2.0, ease: 'sine.inOut' },
+        { opacity: 0, duration: 1.4, ease: 'sine.inOut' },
         9.0
       )
     }
@@ -588,6 +638,252 @@ export default function OrySection() {
     }
     if (l4RightEl)   tl.to(l4RightEl, { x: 30, opacity: 0, duration: 0.5, ease: 'power2.in' }, L4_OUT + 0.1)
 
+    // ── Feature screens (10.6→24.2) ─────────────────────────────────────────
+    //   10.6→17.2  "02 / PERFORMANCE TIMER"
+    //   17.6→24.2  "01 / HEART RATE MONITOR"
+    // The watch is parked at scale 1.0 and dead center through both windows
+    // (the pull-back doesn't start until 24.6), so it reads as the dial each
+    // readout belongs to. Everything is scrubbed: intro on the way down, the
+    // same beats in reverse on the way up.
+    //
+    // Both screens share one shape — index, two-line headline, copy, scroll
+    // cue, stat panel, pager, badge — so they share one builder. Each screen's
+    // markup carries data-feature="<key>" on both its backdrop root and its
+    // content root, and every animated part is tagged data-feat-*. Scoping the
+    // queries by key is what stops the two screens picking up each other's
+    // elements; the parts they don't share (perf's rings, hr's trace) are just
+    // tags the other screen happens not to use.
+    //
+    // The intro and outro are built as child timelines in their own local units
+    // — relative beats only, no absolute offsets — then stretched onto the
+    // master with .duration(). Setting duration on a timeline makes GSAP solve
+    // its timeScale for you, so inDur/outDur are literally how much scroll each
+    // phase plays over, and the beats inside keep their proportions. Retiming a
+    // screen is those two numbers, nothing else.
+    const featureSplits: GSAPSplitText[] = []
+    const featureLoops: gsap.core.Timeline[] = []
+
+    const buildFeature = (
+      key: string,
+      at: number, inDur: number,
+      outAt: number, outDur: number,
+    ) => {
+      const scope = `[data-feature="${key}"]`
+      function one<T extends Element>(sel: string) { return pinned.querySelector<T>(`${scope} ${sel}`) }
+      function all<T extends Element>(sel: string) { return pinned.querySelectorAll<T>(`${scope} ${sel}`) }
+
+      const backdrop = one<HTMLElement>('[data-feat-backdrop]')
+      const rings    = all<SVGGElement>('[data-feat-ring]')
+      const spins    = all<SVGGElement>('[data-feat-spin]')
+      const flows    = all<SVGPathElement>('[data-feat-flow]')
+      const draws    = all<SVGPathElement>('[data-feat-draw]')
+      const wipeEl   = one<SVGRectElement>('[data-feat-wipe]')
+      const fades    = all<Element>('[data-feat-fade]')
+      const indexEl  = one<HTMLElement>('[data-feat-index]')
+      const lines    = all<HTMLElement>('[data-feat-line]')
+      const copyEl   = one<HTMLElement>('[data-feat-copy]')
+      const scrollEl = one<HTMLElement>('[data-feat-scroll]')
+      const ruleEl   = one<HTMLElement>('[data-feat-scroll-rule]')
+      const stats    = all<HTMLElement>('[data-feat-stat]')
+      const dividers = all<HTMLElement>('[data-feat-divider]')
+      const pagerEl  = one<HTMLElement>('[data-feat-pager]')
+      const badgeEl  = one<HTMLElement>('[data-feat-badge]')
+
+      const copySplit = copyEl ? new GSAPSplitText(copyEl, { type: 'words' }) : null
+      if (copySplit && copyEl) {
+        featureSplits.push(copySplit)
+        // Hide the words first, then promote the parent — the parent starts at
+        // opacity 0 inline, and without this the line flashes whole before the
+        // per-word reveal takes over.
+        gsap.set(copySplit.words, { opacity: 0 })
+        gsap.set(copyEl, { opacity: 1 })
+      }
+
+      // Resting state. Where everything sits before the playhead arrives, and
+      // what a reload straight into the middle of the section lands on.
+      if (backdrop) gsap.set(backdrop, { opacity: 0 })
+      if (rings.length) gsap.set(rings, { opacity: 0, scale: 0.55, rotation: -22, svgOrigin: '500 500' })
+      if (draws.length) gsap.set(draws, { strokeDashoffset: 1000 })
+      if (wipeEl) gsap.set(wipeEl, { scaleX: 0, transformOrigin: 'left center' })
+      if (fades.length) gsap.set(fades, { opacity: 0 })
+      if (indexEl) gsap.set(indexEl, { opacity: 0, x: -26 })
+      // y:0 is not redundant. The lines carry an inline translateY(112%) so they
+      // stay hidden before the timeline exists, and GSAP reads transforms off
+      // the *computed* matrix — where that percentage has already been resolved
+      // to px. Left alone it would be absorbed as y:~114px and composed
+      // underneath yPercent, so a tween to yPercent:0 would strand each line a
+      // full line-height down, still clipped. Pinning y clears it.
+      if (lines.length) gsap.set(lines, { y: 0, yPercent: 112 })
+      if (scrollEl) gsap.set(scrollEl, { opacity: 0, y: 16 })
+      if (ruleEl) gsap.set(ruleEl, { scaleX: 0 })
+      if (stats.length) gsap.set(stats, { opacity: 0, x: 38 })
+      if (dividers.length) gsap.set(dividers, { scaleX: 0 })
+      if (pagerEl) gsap.set(pagerEl, { opacity: 0, x: 20 })
+      if (badgeEl) gsap.set(badgeEl, { opacity: 0, y: 14 })
+
+      // ── Intro. Backdrop first, copy arriving on top of it, left side leading
+      //    and the stat panel a beat behind.
+      const tin = gsap.timeline()
+      if (backdrop) {
+        tin.fromTo(backdrop, { opacity: 0 }, { opacity: 1, duration: 0.9, ease: 'power2.out', immediateRender: false }, 0)
+      }
+      // Perf's rings bloom outward one at a time — inner first, each a beat
+      // behind the last, so the stack builds instead of appearing all at once.
+      // They unwind the last of their rotation as they land, which hands off to
+      // the free-running spin below without a visible seam.
+      if (rings.length) {
+        tin.fromTo(rings,
+          { opacity: 0, scale: 0.55, rotation: -22 },
+          { opacity: 1, scale: 1, rotation: 0, duration: 0.8, ease: 'power2.out',
+            svgOrigin: '500 500', stagger: { each: 0.12, from: 'start' }, immediateRender: false },
+          0
+        )
+      }
+      // …and hr's trace writes itself left to right, like a pen. pathLength is
+      // normalized to 1000 in the markup, so the dash maths needs no measuring.
+      if (draws.length) {
+        tin.fromTo(draws,
+          { strokeDashoffset: 1000 },
+          { strokeDashoffset: 0, duration: 1.5, ease: 'power1.inOut', stagger: 0.06, immediateRender: false },
+          0
+        )
+      }
+      // …and act's route is uncovered left to right by growing the rect its
+      // clip path is built from. Its stroke can't do the reveal itself — the
+      // dash pattern there is already spoken for by the marching-ants loop.
+      if (wipeEl) {
+        tin.fromTo(wipeEl,
+          { scaleX: 0 },
+          { scaleX: 1, duration: 1.4, ease: 'power1.inOut', transformOrigin: 'left center', immediateRender: false },
+          0
+        )
+      }
+      // Waypoints and their labels come up behind the sweep — a plain fade, no
+      // scale, so they read as the trail lighting up rather than as markers
+      // being dropped onto it. Staggered in route order.
+      if (fades.length) {
+        tin.fromTo(fades,
+          { opacity: 0 },
+          { opacity: 1, duration: 0.55, ease: 'power1.inOut', stagger: 0.35, immediateRender: false },
+          0.5
+        )
+      }
+      if (indexEl) {
+        tin.fromTo(indexEl, { opacity: 0, x: -26 }, { opacity: 1, x: 0, duration: 0.5, ease: 'power2.out', immediateRender: false }, 0)
+      }
+      if (lines.length) {
+        tin.fromTo(lines, { y: 0, yPercent: 112 }, { yPercent: 0, duration: 0.75, ease: 'power3.out', stagger: 0.11, immediateRender: false }, 0.1)
+      }
+      if (copySplit?.words.length) {
+        tin.fromTo(copySplit.words, { opacity: 0 }, { opacity: 1, duration: 0.5, ease: 'power1.inOut', stagger: { each: 0.05, from: 'start' }, immediateRender: false }, 0.45)
+      }
+      if (stats.length) {
+        tin.fromTo(stats, { opacity: 0, x: 38 }, { opacity: 1, x: 0, duration: 0.5, ease: 'power2.out', stagger: 0.13, immediateRender: false }, 0.4)
+      }
+      if (dividers.length) {
+        tin.fromTo(dividers, { scaleX: 0 }, { scaleX: 1, duration: 0.55, ease: 'power2.out', stagger: 0.13, immediateRender: false }, 0.5)
+      }
+      if (scrollEl) {
+        tin.fromTo(scrollEl, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.45, ease: 'power2.out', immediateRender: false }, 0.7)
+      }
+      if (pagerEl) {
+        tin.fromTo(pagerEl, { opacity: 0, x: 20 }, { opacity: 1, x: 0, duration: 0.45, ease: 'power2.out', immediateRender: false }, 0.75)
+      }
+      if (ruleEl) {
+        tin.fromTo(ruleEl, { scaleX: 0 }, { scaleX: 1, duration: 0.5, ease: 'power2.out', immediateRender: false }, 0.8)
+      }
+      if (badgeEl) {
+        tin.fromTo(badgeEl, { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, ease: 'power2.out', immediateRender: false }, 0.85)
+      }
+      if (tin.duration()) {
+        tin.duration(inDur)
+        tl.add(tin, at)
+      }
+
+      // ── Outro. Each side leaves the way it came in, the headline lines
+      //    dropping back through their clip boxes and the backdrop opening
+      //    outward as it dissolves — so the screen expands rather than
+      //    collapsing.
+      const tout = gsap.timeline()
+      if (indexEl) tout.to(indexEl, { opacity: 0, x: -26, duration: 0.5, ease: 'power2.in' }, 0)
+      if (lines.length) tout.to(lines, { yPercent: 112, duration: 0.6, ease: 'power3.in', stagger: 0.08 }, 0)
+      if (copySplit?.words.length) {
+        tout.to(copySplit.words, { opacity: 0, duration: 0.35, ease: 'power1.inOut', stagger: { each: 0.04, from: 'end' } }, 0.1)
+      }
+      if (ruleEl) tout.to(ruleEl, { scaleX: 0, duration: 0.4, ease: 'power2.in' }, 0)
+      if (scrollEl) tout.to(scrollEl, { opacity: 0, y: 16, duration: 0.45, ease: 'power2.in' }, 0.1)
+      if (dividers.length) tout.to(dividers, { scaleX: 0, duration: 0.45, ease: 'power2.in', stagger: 0.08 }, 0)
+      if (stats.length) tout.to(stats, { opacity: 0, x: 38, duration: 0.5, ease: 'power2.in', stagger: 0.1 }, 0.1)
+      if (pagerEl) tout.to(pagerEl, { opacity: 0, x: 20, duration: 0.45, ease: 'power2.in' }, 0.2)
+      if (badgeEl) tout.to(badgeEl, { opacity: 0, y: 14, duration: 0.4, ease: 'power2.in' }, 0)
+      if (rings.length) {
+        tout.to(rings,
+          { opacity: 0, scale: 1.4, rotation: 26, duration: 0.85, ease: 'power2.in',
+            svgOrigin: '500 500', stagger: { each: 0.1, from: 'start' } },
+          0
+        )
+      }
+      // The trace keeps sweeping the way it was drawn and runs off the far end
+      // rather than rewinding — a monitor doesn't un-draw itself.
+      if (draws.length) {
+        tout.to(draws, { strokeDashoffset: -1000, duration: 1.2, ease: 'power1.in', stagger: 0.06 }, 0)
+      }
+      // The route retracts from the near end instead of the far one, so the
+      // trail reads as being walked back off the screen.
+      if (fades.length) {
+        tout.to(fades, { opacity: 0, duration: 0.45, ease: 'power1.inOut',
+          stagger: { each: 0.2, from: 'end' } }, 0)
+      }
+      if (wipeEl) {
+        tout.to(wipeEl, { scaleX: 0, duration: 1.1, ease: 'power1.in', transformOrigin: 'right center' }, 0.3)
+      }
+      if (backdrop) tout.to(backdrop, { opacity: 0, duration: 1.2, ease: 'power2.inOut' }, 0)
+      if (tout.duration()) {
+        tout.duration(outDur)
+        tl.add(tout, outAt)
+      }
+
+      // ── Free-running motion. Not scrubbed — the rings keep turning and the
+      //    monitor keeps sweeping while the screen is held, which is the whole
+      //    point — so it lives on its own timeline, gated at the screen's two
+      //    edges. Direction-aware like the blob at 7.0, so scrolling back up out
+      //    of a screen stops it just as scrolling down past it does.
+      const loop = gsap.timeline({ paused: true })
+      featureLoops.push(loop)
+      spins.forEach(el => {
+        const period = Number(el.dataset.featSpin) || 40
+        loop.to(el, {
+          rotation: period < 0 ? -360 : 360,
+          duration: Math.abs(period),
+          ease: 'none', repeat: -1, svgOrigin: '500 500',
+        }, 0)
+      })
+      // Dash pattern and offset step are both 1000, so each cycle lands exactly
+      // where the last one started and the sweep never visibly seams.
+      flows.forEach(el => {
+        const period = Number(el.dataset.featFlow) || 5
+        loop.to(el, {
+          strokeDashoffset: -1000,
+          duration: Math.abs(period),
+          ease: 'none', repeat: -1,
+        }, 0)
+      })
+      if (loop.getChildren().length) {
+        tl.call(function () {
+          const dir = tl.scrollTrigger?.direction ?? 1
+          if (dir > 0) loop.play(); else loop.pause()
+        }, [], at)
+        tl.call(function () {
+          const dir = tl.scrollTrigger?.direction ?? 1
+          if (dir > 0) loop.pause(); else loop.play()
+        }, [], outAt + outDur)
+      }
+    }
+
+    buildFeature('perf', PERF_T, PERF_IN_DUR, PERF_OUT, PERF_OUT_DUR)
+    buildFeature('hr',   HR_T,   HR_IN_DUR,   HR_OUT,   HR_OUT_DUR)
+    buildFeature('act',  ACT_T,  ACT_IN_DUR,  ACT_OUT,  ACT_OUT_DUR)
+
     // ── Tail. The container is 1472vh (= 1372vh of scroll once pinned) and every
     // cue above was authored against 500vh of scroll, i.e. 45.43vh per timeline
     // unit — running the timeline to 30.2 keeps that ratio so nothing above
@@ -615,13 +911,13 @@ export default function OrySection() {
     //                             to its face
     //  1327→1372vh (t 29.2→30.2): space — the watch, front on, holding
     if (l5El) {
-      tl.fromTo(l5El, { opacity: 0 }, { opacity: 1, duration: 1.4, ease: 'none' }, 13.6)
+      tl.fromTo(l5El, { opacity: 0 }, { opacity: 1, duration: 1.4, ease: 'none' }, L5_T_FADE)
     }
     if (canvasEl) {
       tl.fromTo(canvasEl,
         { opacity: 1 },
         { opacity: 0, duration: 1.4, ease: 'power2.in', immediateRender: false },
-        15.6
+        L5_T_WATCH_OUT
       )
     }
     // Strokes blow up into the empty screen the watch left behind, in two
@@ -769,12 +1065,14 @@ export default function OrySection() {
       disposed = true
       ScrollTrigger.getAll().forEach(st => st.kill())
       blobTl.kill()
+      featureLoops.forEach(l => l.kill())
       leftSplit?.revert()
       rightSplit?.revert()
       leftSplit3?.revert()
       rightSplit3?.revert()
       l4LeftSplit?.revert()
       l4RightSplit?.revert()
+      featureSplits.forEach(s => s.revert())
     }
   }, { scope: containerRef, dependencies: [done] })
 
@@ -783,7 +1081,7 @@ export default function OrySection() {
     
 
     /* Outer container — gives scroll room for the pin */
-    <div ref={containerRef} style={{ minHeight: '1472vh', background: '#111' }}>
+    <div ref={containerRef} style={{ minHeight: `${CONTAINER_VH}vh`, background: '#111' }}>
 
       {/* 100 vh pinned panel */}
       <div
@@ -800,6 +1098,11 @@ export default function OrySection() {
         >
           <IceFrameBackground height="100%" />
         </div>
+
+        {/* ── Feature-screen backdrops — behind the watch, over the ice frame ── */}
+        <PerformanceRings />
+        <HeartRateWave />
+        <ActivityTerrain />
 
         {/* ── Canvas layer — fades out on the final screen, leaving the strokes ── */}
         <div
@@ -977,6 +1280,11 @@ export default function OrySection() {
             </h2>
           </div>
         </div>
+
+        {/* ── Feature-screen copy + readouts — over the watch, under the blob ── */}
+        <PerformanceContent />
+        <HeartRateContent />
+        <ActivityContent />
 
         {/* ── Layer 4 liquid blob — only visible during the WATER PROOF section ── */}
         <div
