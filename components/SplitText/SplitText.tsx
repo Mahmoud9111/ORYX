@@ -59,11 +59,13 @@ const SplitText = ({
   }, [onLetterAnimationComplete]);
 
   useEffect(() => {
-    if (document.fonts.status === "loaded") {
-      setFontsLoaded(true);
-    } else {
-      document.fonts.ready.then(() => setFontsLoaded(true));
-    }
+    let cancelled = false;
+    document.fonts.ready.then(() => {
+      if (!cancelled) setFontsLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useGSAP(
@@ -74,7 +76,7 @@ const SplitText = ({
       const el = ref.current;
 
       if (el._rbsplitInstance) {
-        try { el._rbsplitInstance.revert(); } catch (_) { /* ignore */ }
+        try { el._rbsplitInstance.revert(); } catch { /* ignore */ }
         el._rbsplitInstance = null;
       }
 
@@ -143,7 +145,7 @@ const SplitText = ({
         ScrollTrigger.getAll().forEach((st) => {
           if (st.trigger === el) st.kill();
         });
-        try { splitInstance.revert(); } catch (_) { /* ignore */ }
+        try { splitInstance.revert(); } catch { /* ignore */ }
         el._rbsplitInstance = null;
       };
     },

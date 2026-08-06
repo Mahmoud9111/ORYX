@@ -4,13 +4,11 @@ Command: npx gltfjsx@6.5.3 ory.glb -t
 */
 
 import * as THREE from 'three'
-import { useGLTF, useTexture, RoundedBox, Text } from '@react-three/drei'
-import { GLTF } from 'three-stdlib'
+import { useGLTF, useTexture, RoundedBox } from '@react-three/drei'
 import { SRGBColorSpace } from 'three'
 import { JSX, useMemo } from 'react'
-import { useControls, folder } from 'leva'
 
-type GLTFResult = GLTF & {
+type GLTFResult = {
   nodes: {
     Body: THREE.Mesh
     Bezel: THREE.Mesh
@@ -22,7 +20,6 @@ type GLTFResult = GLTF & {
     Body: THREE.MeshStandardMaterial
     Screen: THREE.MeshStandardMaterial
   }
-  animations: GLTFAction[]
 }
 
 // ─── Texture position controls ───────────────────────────────────────────────
