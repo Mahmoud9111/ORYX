@@ -87,7 +87,7 @@ export default function Nav() {
               href="#"
               onMouseEnter={() => setHovered(label)}
               onMouseLeave={() => setHovered(null)}
-              className="relative font-mono text-[11px] tracking-[0.18em] uppercase transition-colors duration-200 whitespace-nowrap"
+              className="relative font-mono text-[10px] tracking-[0.18em] uppercase transition-colors duration-200 whitespace-nowrap"
               style={{ color: hovered === label ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.4)' }}
             >
               {label}
@@ -110,7 +110,7 @@ export default function Nav() {
             href="#"
             onMouseEnter={onCtaEnter}
             onMouseLeave={onCtaLeave}
-            className="hidden md:inline-block font-mono text-[11px] tracking-[0.18em] uppercase
+            className="hidden md:inline-block font-mono text-[10px] tracking-[0.18em] uppercase
                        text-orange-100 px-5 py-2
                        bg-orange-500/25 border border-orange-400/50
                        transition-colors duration-200 hover:bg-orange-500/40"
@@ -159,14 +159,14 @@ export default function Nav() {
             <a
               key={label}
               href="#"
-              className="font-mono text-[11px] tracking-[0.2em] text-white/45 hover:text-white/80 uppercase py-2 transition-colors"
+              className="font-mono text-[10px] tracking-[0.2em] text-white/45 hover:text-white/80 uppercase py-2 transition-colors"
             >
               {label}
             </a>
           ))}
           <a
             href="#"
-            className="mt-3 font-mono text-[11px] tracking-[0.18em] text-orange-100 px-5 py-2.5
+            className="mt-3 font-mono text-[10px] tracking-[0.18em] text-orange-100 px-5 py-2.5
                        bg-orange-500/25 border border-orange-400/50 uppercase text-center"
             style={{ boxShadow: '0 0 16px 2px rgba(251,146,60,0.3)' }}
           >

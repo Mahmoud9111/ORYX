@@ -28,7 +28,7 @@ export default function LiquidGlassControls({ config, onChange, className, style
         pointerEvents: 'auto',
         width: open ? 280 : 'auto',
         color: '#fff',
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontFamily: 'var(--font-lama), ui-monospace, SFMono-Regular, Menlo, monospace',
         fontSize: 11,
         letterSpacing: '0.05em',
         background: 'rgba(8, 8, 18, 0.55)',
